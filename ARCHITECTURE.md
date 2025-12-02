@@ -239,7 +239,7 @@ flowchart LR
     
     subgraph Storage["Storage"]
         Vectors[(Qdrant Vector Store)]
-        Meta[(Metadata Language Source Date)]
+        Meta[(Metadata)]
     end
     
     subgraph Retrieval["Retrieval"]
