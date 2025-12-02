@@ -4,65 +4,65 @@
 
 ```mermaid
 graph TB
- subgraph "Frontend Layer"
- UI[Streamlit Web Interface]
- Sidebar[Sidebar Controls - API Config - Model Selection - Document Upload - Filters]
- Chat[Chat Interface - Query Input - Answer Display - Translation - Source Verification]
- end
+    subgraph Frontend["Frontend Layer"]
+        UI[Streamlit Web Interface]
+        Sidebar[Sidebar Controls]
+        Chat[Chat Interface]
+    end
 
- subgraph "Document Processing Layer"
- Upload[Document Upload PDF, DOCX, TXT, Images]
- OCR[Tesseract OCR + PaddleOCR]
- Extract[Text Extraction pdfplumber, docx2txt]
- LangDetect[Language Detection langdetect]
- Chunking[Text Chunking Dynamic Size & Overlap]
- end
+    subgraph Processing["Document Processing Layer"]
+        Upload[Document Upload]
+        OCR[Tesseract OCR + PaddleOCR]
+        Extract[Text Extraction]
+        LangDetect[Language Detection]
+        Chunking[Text Chunking]
+    end
 
- subgraph "RAG Pipeline Core"
- Embedding[Multilingual Embeddings intfloat/multilingual-e5-large]
- VectorDB[(Qdrant Vector Database - Document Chunks - Metadata - Language Tags)]
- Retrieval[Semantic Retrieval - MMR Diversity - Language Filtering - Source Filtering]
- Reranker[Cross-Encoder Reranking BAAI/bge-reranker-large]
- end
+    subgraph RAG["RAG Pipeline Core"]
+        Embedding[Multilingual Embeddings]
+        VectorDB[(Qdrant Vector Database)]
+        Retrieval[Semantic Retrieval]
+        Reranker[Cross-Encoder Reranking]
+    end
 
- subgraph "LLM Layer"
- Gemini[Google Gemini API gemini-2.5-flash]
- Prompt[Prompt Engineering - Multilingual Instructions - Context Formatting - Answer Modes]
- Translation[Translation Service Non-English to English]
- end
+    subgraph LLM["LLM Layer"]
+        Gemini[Google Gemini API]
+        Prompt[Prompt Engineering]
+        Translation[Translation Service]
+    end
 
- subgraph "Features & Utilities"
- Glossary[Glossary Extraction Key Terms & Definitions]
- Export[Export & Share - Markdown Export - Read-only Links]
- Filters[Retrieval Filters - Language - Source - Date Range]
- end
+    subgraph Features["Features & Utilities"]
+        Glossary[Glossary Extraction]
+        Export[Export & Share]
+        Filters[Retrieval Filters]
+    end
 
- UI --> Sidebar
- UI --> Chat
- Sidebar --> Upload
- Upload --> OCR
- Upload --> Extract
- Extract --> LangDetect
- LangDetect --> Chunking
- Chunking --> Embedding
- Embedding --> VectorDB
-
- Chat --> Retrieval
- Retrieval --> VectorDB
- Retrieval --> Reranker
- Reranker --> Prompt
- Prompt --> Gemini
- Gemini --> Chat
-
- Chat --> Translation
- Chat --> Export
- Chunking --> Glossary
- Retrieval --> Filters
-
- style VectorDB fill:#4CAF50,stroke:#2E7D32,stroke-width:3px,color:#fff
- style Gemini fill:#4285F4,stroke:#1976D2,stroke-width:3px,color:#fff
- style Embedding fill:#FF9800,stroke:#F57C00,stroke-width:2px,color:#fff
- style Reranker fill:#9C27B0,stroke:#7B1FA2,stroke-width:2px,color:#fff
+    UI --> Sidebar
+    UI --> Chat
+    Sidebar --> Upload
+    Upload --> OCR
+    Upload --> Extract
+    Extract --> LangDetect
+    LangDetect --> Chunking
+    Chunking --> Embedding
+    Embedding --> VectorDB
+    
+    Chat --> Retrieval
+    Retrieval --> VectorDB
+    Retrieval --> Reranker
+    Reranker --> Prompt
+    Prompt --> Gemini
+    Gemini --> Chat
+    
+    Chat --> Translation
+    Chat --> Export
+    Chunking --> Glossary
+    Retrieval --> Filters
+    
+    style VectorDB fill:#4CAF50,stroke:#2E7D32,stroke-width:3px,color:#fff
+    style Gemini fill:#4285F4,stroke:#1976D2,stroke-width:3px,color:#fff
+    style Embedding fill:#FF9800,stroke:#F57C00,stroke-width:2px,color:#fff
+    style Reranker fill:#9C27B0,stroke:#7B1FA2,stroke-width:2px,color:#fff
 ```
 
 ## RAG Pipeline Flow
