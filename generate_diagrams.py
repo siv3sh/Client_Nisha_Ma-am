@@ -31,24 +31,48 @@ def generate_png_from_mermaid(mermaid_code, output_path):
     """Generate PNG from Mermaid code using mermaid.ink API."""
     import base64
     import zlib
+    import json
     
-    # Base64 encode the mermaid code
-    mermaid_bytes = mermaid_code.encode('utf-8')
-    compressed = zlib.compress(mermaid_bytes)
-    encoded = base64.urlsafe_b64encode(compressed).decode('ascii').rstrip('=')
+    # Clean the mermaid code - remove any problematic characters
+    cleaned_code = mermaid_code.replace('→', 'to').replace('→', '->')
     
-    # Use mermaid.ink API
-    url = f"https://mermaid.ink/img/{encoded}"
-    
+    # Try the new mermaid.ink API format (JSON-based)
     try:
-        response = requests.get(url, timeout=30)
+        # Method 1: Try JSON API endpoint
+        api_url = "https://mermaid.ink/api/v2/png"
+        payload = {
+            "code": cleaned_code,
+            "mermaid": {"theme": "default"}
+        }
+        response = requests.post(api_url, json=payload, timeout=30)
+        
         if response.status_code == 200:
             with open(output_path, 'wb') as f:
                 f.write(response.content)
             return True
+    except Exception as e1:
+        print(f"JSON API failed: {e1}, trying legacy method...")
+    
+    # Method 2: Legacy base64 method
+    try:
+        mermaid_bytes = cleaned_code.encode('utf-8')
+        compressed = zlib.compress(mermaid_bytes)
+        encoded = base64.urlsafe_b64encode(compressed).decode('ascii').rstrip('=')
+        url = f"https://mermaid.ink/img/{encoded}"
+        
+        response = requests.get(url, timeout=30)
+        if response.status_code == 200:
+            # Check if it's actually an image
+            content_type = response.headers.get('Content-Type', '')
+            if 'image' in content_type or len(response.content) > 1000:
+                with open(output_path, 'wb') as f:
+                    f.write(response.content)
+                return True
+            else:
+                print(f"Warning: Response doesn't look like an image (size: {len(response.content)} bytes)")
+                return False
         else:
             print(f"Error: API returned status {response.status_code}")
-            print(f"URL: {url[:100]}...")
             return False
     except Exception as e:
         print(f"Error generating PNG: {e}")
