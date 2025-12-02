@@ -28,7 +28,7 @@ graph TB
     subgraph "LLM Layer"
         Gemini[Google Gemini API<br/>gemini-2.5-flash]
         Prompt[Prompt Engineering<br/>- Multilingual Instructions<br/>- Context Formatting<br/>- Answer Modes]
-        Translation[Translation Service<br/>Non-English → English]
+        Translation[Translation Service<br/>Non-English to English]
     end
 
     subgraph "Features & Utilities"
