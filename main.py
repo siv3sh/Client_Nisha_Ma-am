@@ -11,7 +11,7 @@ import streamlit as st
 from dotenv import load_dotenv
 from streamlit.errors import StreamlitSecretNotFoundError
 
-from llm_handler import GroqHandler
+from llm_handler import GeminiHandler
 from rag_pipeline import RAGPipeline
 from utils import (
     detect_language,
@@ -20,6 +20,126 @@ from utils import (
     get_language_distribution,
     get_language_name,
 )
+
+# Custom CSS for better UI
+st.markdown("""
+<style>
+    /* Main container styling */
+    .main .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+    }
+    
+    /* Sidebar styling */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #f8f9fa 0%, #ffffff 100%);
+    }
+    
+    /* Header styling */
+    h1 {
+        color: #1f77b4;
+        font-weight: 700;
+        margin-bottom: 1rem;
+    }
+    
+    h2, h3 {
+        color: #2c3e50;
+        font-weight: 600;
+    }
+    
+    /* Button styling */
+    .stButton > button {
+        width: 100%;
+        border-radius: 8px;
+        font-weight: 500;
+        transition: all 0.3s ease;
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    
+    /* Chat message styling */
+    .stChatMessage {
+        padding: 1rem;
+        border-radius: 12px;
+        margin-bottom: 1rem;
+    }
+    
+    /* Info boxes */
+    .stInfo {
+        border-left: 4px solid #1f77b4;
+        padding: 1rem;
+        border-radius: 4px;
+    }
+    
+    /* Success messages */
+    .stSuccess {
+        border-left: 4px solid #28a745;
+    }
+    
+    /* Warning messages */
+    .stWarning {
+        border-left: 4px solid #ffc107;
+    }
+    
+    /* Error messages */
+    .stError {
+        border-left: 4px solid #dc3545;
+    }
+    
+    /* Card-like containers */
+    .card {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 12px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin-bottom: 1rem;
+    }
+    
+    /* Better spacing */
+    .stMarkdown {
+        margin-bottom: 0.5rem;
+    }
+    
+    /* File uploader styling */
+    [data-testid="stFileUploader"] {
+        border: 2px dashed #1f77b4;
+        border-radius: 8px;
+        padding: 1rem;
+    }
+    
+    /* Selectbox styling */
+    .stSelectbox label {
+        font-weight: 500;
+        color: #2c3e50;
+    }
+    
+    /* Multiselect styling */
+    .stMultiSelect label {
+        font-weight: 500;
+        color: #2c3e50;
+    }
+    
+    /* Expander styling */
+    .streamlit-expanderHeader {
+        font-weight: 500;
+        color: #1f77b4;
+    }
+    
+    /* Caption styling */
+    .stCaption {
+        color: #6c757d;
+        font-style: italic;
+    }
+    
+    /* Hide Streamlit branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+</style>
+""", unsafe_allow_html=True)
 
 try:
     from indic_transliteration import sanscript
@@ -51,7 +171,7 @@ SUPPORTED_FILE_TYPES = [
     "tif",
     "webp",
 ]
-SECRET_KEYS = {"GROQ_API_KEY", "GROQ_MODEL", "QDRANT_URL", "QDRANT_COLLECTION_NAME"}
+SECRET_KEYS = {"GEMINI_API_KEY", "GEMINI_MODEL", "QDRANT_URL", "QDRANT_COLLECTION_NAME"}
 LANGUAGE_TO_SANSCRIPT = {
     "ta": getattr(sanscript, "TAMIL", None),
     "ml": getattr(sanscript, "MALAYALAM", None),
@@ -285,13 +405,13 @@ def ensure_session_defaults() -> None:
     st.session_state.setdefault("share_mode", False)
     st.session_state.setdefault("share_applied", False)
     st.session_state.setdefault("translated_outputs", {})
-    default_model = os.getenv("GROQ_MODEL", GroqHandler.get_available_models()[0])
-    st.session_state.setdefault("groq_model", default_model)
+    default_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    st.session_state.setdefault("gemini_model", default_model)
 
 
 def get_active_api_key() -> Optional[str]:
     """Return the API key from session or environment."""
-    api_key = st.session_state.get("api_key") or os.getenv("GROQ_API_KEY")
+    api_key = st.session_state.get("api_key") or os.getenv("GEMINI_API_KEY")
     if api_key:
         api_key = api_key.strip()
     return api_key or None
@@ -301,8 +421,8 @@ def apply_api_configuration(api_key: str) -> None:
     """Persist API key changes and refresh cached resources."""
     clean_key = api_key.strip()
     st.session_state["api_key"] = clean_key
-    os.environ["GROQ_API_KEY"] = clean_key
-    get_cached_groq_handler.clear()
+    os.environ["GEMINI_API_KEY"] = clean_key
+    get_cached_gemini_handler.clear()
 
 
 def create_share_token(payload: Dict[str, Any]) -> str:
@@ -364,9 +484,9 @@ def get_cached_rag_pipeline(qdrant_url: Optional[str], collection_name: str) -> 
 
 
 @st.cache_resource(show_spinner=False)
-def get_cached_groq_handler(api_key: str, model: Optional[str]) -> GroqHandler:
-    """Return a cached Groq handler bound to the provided credentials."""
-    return GroqHandler(api_key=api_key, model=model)
+def get_cached_gemini_handler(api_key: str, model: Optional[str]) -> GeminiHandler:
+    """Return a cached Gemini handler bound to the provided credentials."""
+    return GeminiHandler(api_key=api_key, model=model)
 
 
 def determine_document_language(
@@ -464,116 +584,171 @@ def process_uploaded_document(
 def render_sidebar(read_only: bool = False) -> Dict[str, Any]:
     """Render sidebar controls and return configuration/state selections."""
     with st.sidebar:
-        st.header("🔐 API Settings")
-        api_key_input = st.text_input(
-            "Groq API key",
-            value=st.session_state.get("api_key", ""),
-            type="password",
-            help="The key is stored only in your current session.",
-        )
-        apply_clicked = st.button("Apply API key", use_container_width=True, disabled=read_only)
-
-        if apply_clicked and not read_only:
-            if api_key_input.strip():
-                apply_api_configuration(api_key_input)
-                st.success("API key applied successfully.")
-            else:
-                st.warning("Please enter a valid API key.")
-
-        api_key = get_active_api_key()
-        if api_key:
-            st.caption("🔒 API key configured.")
-        else:
-            st.info("Provide a Groq API key to enable answer generation.")
-
+        # App Title
+        st.markdown("""
+        <div style='text-align: center; padding: 1rem 0;'>
+            <h1 style='color: #1f77b4; margin: 0; font-size: 1.8rem;'>🌏 Multilingual</h1>
+            <h2 style='color: #2c3e50; margin: 0; font-size: 1.2rem;'>Document Assistant</h2>
+        </div>
+        """, unsafe_allow_html=True)
         st.markdown("---")
-        st.subheader("🤖 Model")
-
-        model_options = GroqHandler.get_available_models()
-        default_model = (
-            st.session_state.get("groq_model")
-            if st.session_state.get("groq_model") in model_options
-            else os.getenv("GROQ_MODEL", model_options[0])
-        )
-        if default_model not in model_options:
-            default_model = model_options[0]
-
-        selected_model = st.selectbox(
-            "Groq model",
-            model_options,
-            index=model_options.index(default_model),
-            disabled=api_key is None,
-        )
-
-        if selected_model != st.session_state.get("groq_model"):
-            st.session_state["groq_model"] = selected_model
-            os.environ["GROQ_MODEL"] = selected_model
-            if api_key:
-                get_cached_groq_handler.clear()
-
-        st.markdown("---")
-        st.subheader("📄 Document Upload")
-        uploaded_files = []
-        if not read_only:
-            uploaded_files = st.file_uploader(
-                "Upload one or more documents (drag & drop files or folders)",
-                type=SUPPORTED_FILE_TYPES,
-                accept_multiple_files=True,
-                help="Supported formats: PDF, DOCX, TXT, and common image types.",
+        
+        # API Settings Section
+        with st.expander("🔐 **API Configuration**", expanded=True):
+            api_key_input = st.text_input(
+                "**Gemini API Key**",
+                value=st.session_state.get("api_key", ""),
+                type="password",
+                help="Enter your Google Gemini API key. Get one at: https://makersuite.google.com/app/apikey",
+                placeholder="AIza...",
             )
-        else:
-            st.info("Read-only mode: uploads disabled for shared view.")
-        process_clicked = st.button(
-            "Process selected documents",
-            disabled=(not uploaded_files) or read_only,
-            use_container_width=True,
-        )
+            apply_clicked = st.button("✅ Apply API Key", use_container_width=True, disabled=read_only, type="primary")
+
+            if apply_clicked and not read_only:
+                if api_key_input.strip():
+                    apply_api_configuration(api_key_input)
+                    st.success("✅ API key configured successfully!")
+                else:
+                    st.warning("⚠️ Please enter a valid API key.")
+
+            api_key = get_active_api_key()
+            if api_key:
+                st.success("🔒 API key is configured")
+            else:
+                st.info("💡 Enter your Gemini API key above to get started")
+        
+        st.markdown("---")
+        
+        # Model Selection Section
+        with st.expander("🤖 **AI Model Settings**", expanded=True):
+
+            model_options = GeminiHandler.get_available_models()
+            default_model = (
+                st.session_state.get("gemini_model")
+                if st.session_state.get("gemini_model") in model_options
+                else os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+            )
+            if default_model not in model_options:
+                # Try gemini-2.5-flash first, then fallback to first available
+                default_model = "gemini-2.5-flash" if "gemini-2.5-flash" in model_options else model_options[0]
+
+            selected_model = st.selectbox(
+                "**Select Model**",
+                model_options,
+                index=model_options.index(default_model),
+                disabled=api_key is None,
+                help="Choose the Gemini model to use. Flash models are faster, Pro models are more accurate.",
+            )
+            
+            # Model info
+            if "flash" in selected_model.lower():
+                st.caption("⚡ Fast and efficient model")
+            elif "pro" in selected_model.lower():
+                st.caption("🎯 Advanced reasoning model")
+
+            if selected_model != st.session_state.get("gemini_model"):
+                st.session_state["gemini_model"] = selected_model
+                os.environ["GEMINI_MODEL"] = selected_model
+                if api_key:
+                    get_cached_gemini_handler.clear()
 
         st.markdown("---")
-        st.subheader("🧠 Answer style")
-        answer_mode_label = st.selectbox(
-            "Choose how answers should be formatted",
-            list(ANSWER_MODE_LABELS.keys()),
-            index=list(ANSWER_MODE_LABELS.keys()).index(st.session_state["answer_mode"]),
-            disabled=read_only,
-        )
-        st.session_state["answer_mode"] = answer_mode_label
+        
+        # Document Upload Section
+        with st.expander("📄 **Document Management**", expanded=True):
+            uploaded_files = []
+            if not read_only:
+                uploaded_files = st.file_uploader(
+                    "**Upload Documents**",
+                    type=SUPPORTED_FILE_TYPES,
+                    accept_multiple_files=True,
+                    help="📎 Supported: PDF, DOCX, TXT, Images (JPG, PNG, etc.)",
+                )
+                if uploaded_files:
+                    st.caption(f"📎 {len(uploaded_files)} file(s) selected")
+            else:
+                st.info("🔒 Read-only mode: uploads disabled")
+            
+            process_clicked = st.button(
+                "🚀 Process Documents",
+                disabled=(not uploaded_files) or read_only,
+                use_container_width=True,
+                type="primary",
+            )
+            if uploaded_files and not process_clicked:
+                st.caption("💡 Click 'Process Documents' to add them to your workspace")
+
+        st.markdown("---")
+        
+        # Answer Style Section
+        with st.expander("🧠 **Answer Format**", expanded=False):
+            answer_mode_label = st.selectbox(
+                "**Answer Style**",
+                list(ANSWER_MODE_LABELS.keys()),
+                index=list(ANSWER_MODE_LABELS.keys()).index(st.session_state["answer_mode"]),
+                disabled=read_only,
+                help="Choose how you want answers formatted",
+            )
+            st.session_state["answer_mode"] = answer_mode_label
+            
+            # Show description
+            mode_descriptions = {
+                "Concise": "Short, focused answers (3 sentences max)",
+                "Detailed with citations": "Comprehensive answers with source references",
+                "Bullet summary": "Organized bullet points",
+                "Step-by-step": "Numbered steps with reasoning"
+            }
+            st.caption(f"📝 {mode_descriptions.get(answer_mode_label, '')}")
 
     st.markdown("---")
-    st.subheader("🔍 Retrieval filters")
+    
+    # Retrieval Filters Section (in main area)
+    st.subheader("🔍 **Retrieval Filters**")
+    st.caption("Filter which documents and content are used for answers")
     documents = st.session_state["documents"]
     available_languages = sorted({doc["language"] for doc in documents})
     available_sources = sorted({doc["filename"] for doc in documents})
 
-    if available_languages:
-        default_langs = (
-            st.session_state["selected_languages"]
-            if st.session_state["selected_languages"]
-            else available_languages
-        )
-        selected_languages = st.multiselect(
-            "Languages",
-            options=available_languages,
-            default=default_langs,
-            help="Filter retrieved chunks by language",
-        )
-    else:
-        selected_languages = []
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if available_languages:
+            default_langs = (
+                st.session_state["selected_languages"]
+                if st.session_state["selected_languages"]
+                else available_languages
+            )
+            selected_languages = st.multiselect(
+                "🌐 **Filter by Language**",
+                options=available_languages,
+                default=default_langs,
+                help="Select languages to include in search. Leave empty to search all languages.",
+                format_func=lambda x: get_language_name(x) if x else x,
+            )
+            if selected_languages:
+                st.caption(f"✓ {len(selected_languages)} language(s) selected")
+        else:
+            selected_languages = []
+            st.info("💡 Upload documents to enable language filtering")
 
-    if available_sources:
-        default_sources = (
-            st.session_state["selected_sources"]
-            if st.session_state["selected_sources"]
-            else available_sources
-        )
-        selected_sources = st.multiselect(
-            "Sources",
-            options=available_sources,
-            default=default_sources,
-            help="Restrict retrieval to specific documents",
-        )
-    else:
-        selected_sources = []
+    with col2:
+        if available_sources:
+            default_sources = (
+                st.session_state["selected_sources"]
+                if st.session_state["selected_sources"]
+                else available_sources
+            )
+            selected_sources = st.multiselect(
+                "📚 **Filter by Document**",
+                options=available_sources,
+                default=default_sources,
+                help="Select specific documents to search. Leave empty to search all documents.",
+            )
+            if selected_sources:
+                st.caption(f"✓ {len(selected_sources)} document(s) selected")
+        else:
+            selected_sources = []
+            st.info("💡 Upload documents to enable source filtering")
 
     date_range = None
     if documents:
@@ -589,10 +764,11 @@ def render_sidebar(read_only: bool = False) -> Dict[str, Any]:
             else (min_date, max_date)
         )
         selected_date_range = st.date_input(
-            "Upload date range",
+            "📅 **Filter by Upload Date**",
             value=default_range,
             min_value=min_date,
             max_value=max_date,
+            help="Select date range for documents to include in search",
         )
         if isinstance(selected_date_range, tuple) and len(selected_date_range) == 2:
             date_range = selected_date_range
@@ -600,15 +776,17 @@ def render_sidebar(read_only: bool = False) -> Dict[str, Any]:
             date_range = (selected_date_range, selected_date_range)
     else:
         selected_date_range = None
+        st.caption("💡 Upload documents to enable date filtering")
 
     st.session_state["selected_languages"] = selected_languages
     st.session_state["selected_sources"] = selected_sources
     st.session_state["date_range"] = date_range
 
-    if st.button("🗑️ Clear chat history", use_container_width=True, disabled=read_only):
+    st.markdown("---")
+    if st.button("🗑️ **Clear Chat History**", use_container_width=True, disabled=read_only, type="secondary"):
         st.session_state["messages"] = []
         st.session_state["exchanges"] = []
-        st.experimental_rerun()
+        st.rerun()
 
     return {
         "api_key": api_key,
@@ -624,7 +802,7 @@ def render_sidebar(read_only: bool = False) -> Dict[str, Any]:
 
 def render_chat_interface(
     pipeline: Optional[RAGPipeline],
-    handler: Optional[GroqHandler],
+    handler: Optional[GeminiHandler],
     language_filters: Optional[List[str]],
     source_filters: Optional[List[str]],
     date_range: Optional[Tuple[date, date]],
@@ -733,7 +911,7 @@ def render_chat_interface(
         st.error("❌ Retrieval pipeline is not available.")
         return
 
-    prompt = st.chat_input("Ask a question about the document...")
+    prompt = st.chat_input("💬 Ask a question about your documents...")
     if not prompt:
         return
 
@@ -901,12 +1079,13 @@ def render_chat_interface(
 
 def render_export_controls(read_only: bool) -> None:
     """Provide export/share utilities."""
-    st.subheader("📤 Export & Share")
+    st.markdown("---")
+    st.subheader("📤 **Export & Share**")
     exchanges = st.session_state.get("exchanges", [])
     glossary = st.session_state.get("glossary", [])
 
     if not exchanges:
-        st.info("Run at least one query to enable exports and sharing.")
+        st.info("💡 Run at least one query to enable exports and sharing.")
         return
 
     options = {
@@ -961,8 +1140,13 @@ def main() -> None:
     ensure_session_defaults()
     apply_share_view()
 
-    st.title("🌏 South Indian Multilingual Document QA Chatbot")
-    st.markdown("Upload documents in **Malayalam, Tamil, Telugu, Kannada, or Tulu** and ask questions!")
+    # Main Header
+    st.markdown("""
+    <div style='text-align: center; padding: 2rem 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 12px; margin-bottom: 2rem;'>
+        <h1 style='color: white; margin: 0; font-size: 2.5rem; font-weight: 700;'>🌏 Multilingual Document Assistant</h1>
+        <p style='color: rgba(255,255,255,0.9); font-size: 1.2rem; margin: 1rem 0 0 0;'>Ask questions in Malayalam, Tamil, Telugu, Kannada, or Tulu</p>
+    </div>
+    """, unsafe_allow_html=True)
 
     read_only = st.session_state.get("share_mode", False)
     sidebar_state = render_sidebar(read_only=read_only)
@@ -982,12 +1166,14 @@ def main() -> None:
 
         if sidebar_state["process_clicked"]:
             if not api_key:
-                st.error("A Groq API key is required before processing documents.")
+                st.error("A Gemini API key is required before processing documents.")
             elif sidebar_state["uploaded_files"]:
                 process_uploaded_batch(sidebar_state["uploaded_files"], pipeline)
 
     st.markdown("---")
-    st.subheader("📊 Workspace status")
+    
+    # Workspace Status Section
+    st.subheader("📊 **Workspace Status**")
     documents = sorted(
         st.session_state["documents"],
         key=lambda d: d["uploaded_at"],
@@ -995,22 +1181,42 @@ def main() -> None:
     )
 
     if documents:
-        st.write(f"✅ {len(documents)} document(s) indexed")
+        # Summary cards
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("📄 Documents", len(documents))
+        with col2:
+            languages = len(set(doc["language"] for doc in documents))
+            st.metric("🌐 Languages", languages)
+        with col3:
+            total_chars = sum(doc["text_length"] for doc in documents)
+            st.metric("📝 Characters", f"{total_chars:,}")
+        with col4:
+            latest = max(doc["uploaded_at"] for doc in documents)
+            st.metric("🕒 Latest Upload", datetime.fromtimestamp(latest).strftime("%m/%d"))
+        
+        st.markdown("---")
+        
+        # Document table with better styling
+        st.markdown("### 📚 **Document Library**")
         summary_rows = []
         for doc in documents:
             summary_rows.append(
                 {
-                    "Document": doc["filename"],
-                    "Language": get_language_name(doc["language"]),
-                    "Uploaded": datetime.fromtimestamp(doc["uploaded_at"]).strftime("%Y-%m-%d %H:%M"),
-                    "Characters": doc["text_length"],
+                    "📄 Document": doc["filename"],
+                    "🌐 Language": get_language_name(doc["language"]),
+                    "📅 Uploaded": datetime.fromtimestamp(doc["uploaded_at"]).strftime("%Y-%m-%d %H:%M"),
+                    "📊 Size": f"{doc['text_length']:,} chars",
                 }
             )
-        st.dataframe(summary_rows, use_container_width=True)
+        st.dataframe(summary_rows, use_container_width=True, hide_index=True)
     else:
-        st.write("⏳ No documents indexed yet.")
+        st.info("💡 No documents indexed yet. Upload documents to get started!")
 
-    with st.expander("📘 Workspace glossary", expanded=False):
+    st.markdown("---")
+    
+    # Glossary Section
+    with st.expander("📘 **Workspace Glossary**", expanded=False):
         glossary = st.session_state.get("glossary", [])
         if not glossary:
             st.write("No glossary entries yet.")
@@ -1027,7 +1233,14 @@ def main() -> None:
             st.table(filtered_glossary)
 
     if not documents:
-        st.info("👆 Upload documents from the sidebar to begin!")
+        st.markdown("""
+        <div style='text-align: center; padding: 3rem 2rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 12px; color: white;'>
+            <h2 style='color: white; margin-bottom: 1rem;'>🚀 Get Started</h2>
+            <p style='font-size: 1.1rem; margin-bottom: 2rem;'>Upload your documents to start asking questions!</p>
+            <p style='font-size: 0.9rem; opacity: 0.9;'>📄 Supported formats: PDF, DOCX, TXT, Images</p>
+            <p style='font-size: 0.9rem; opacity: 0.9;'>🌐 Supports: Malayalam, Tamil, Telugu, Kannada, Tulu</p>
+        </div>
+        """, unsafe_allow_html=True)
         return
 
     if read_only:
@@ -1043,21 +1256,33 @@ def main() -> None:
         render_export_controls(read_only=True)
         st.markdown("---")
         st.markdown(
-            "Built with ❤️ using Streamlit, Qdrant, and Groq | Supports Malayalam, Tamil, Telugu, Kannada, and Tulu",
+            """
+            <div style='text-align: center; color: #6c757d; padding: 1rem 0;'>
+                <p style='margin: 0;'>Built with ❤️ using <strong>Streamlit</strong>, <strong>Qdrant</strong>, and <strong>Gemini</strong></p>
+                <p style='margin: 0.5rem 0 0 0;'>Supports: Malayalam, Tamil, Telugu, Kannada, and Tulu</p>
+            </div>
+            """,
+            unsafe_allow_html=True
         )
         return
 
     if not api_key:
-        st.warning("Provide a valid Groq API key to ask questions about your documents.")
+        st.markdown("""
+        <div style='padding: 2rem; background: #fff3cd; border-left: 4px solid #ffc107; border-radius: 8px; margin: 1rem 0;'>
+            <h3 style='color: #856404; margin-top: 0;'>⚠️ API Key Required</h3>
+            <p style='color: #856404; margin-bottom: 0;'>Please configure your Gemini API key in the sidebar to start asking questions.</p>
+            <p style='color: #856404; margin-top: 0.5rem; margin-bottom: 0;'>Get your API key at: <a href='https://makersuite.google.com/app/apikey' target='_blank'>Google AI Studio</a></p>
+        </div>
+        """, unsafe_allow_html=True)
         return
 
     try:
-        handler = get_cached_groq_handler(api_key, selected_model)
+        handler = get_cached_gemini_handler(api_key, selected_model)
     except ValueError as exc:
         st.error(f"❌ {exc}")
         return
     except Exception as exc:
-        st.error(f"❌ Failed to initialise Groq handler: {exc}")
+        st.error(f"❌ Failed to initialise Gemini handler: {exc}")
         return
 
     render_chat_interface(
@@ -1072,10 +1297,16 @@ def main() -> None:
 
     render_export_controls(read_only=False)
 
-st.markdown("---")
-st.markdown(
-        "Built with ❤️ using Streamlit, Qdrant, and Groq | Supports Malayalam, Tamil, Telugu, Kannada, and Tulu",
-)
+    st.markdown("---")
+    st.markdown(
+        """
+        <div style='text-align: center; color: #6c757d; padding: 1rem 0;'>
+            <p style='margin: 0;'>Built with ❤️ using <strong>Streamlit</strong>, <strong>Qdrant</strong>, and <strong>Gemini</strong></p>
+            <p style='margin: 0.5rem 0 0 0;'>Supports: Malayalam, Tamil, Telugu, Kannada, and Tulu</p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 
 if __name__ == "__main__":

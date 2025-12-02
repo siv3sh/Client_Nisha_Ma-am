@@ -52,3 +52,6 @@ scikit-image>=0.21.0
 # Production features
 tenacity>=8.2.0
 python-json-logger>=2.0.0
+
+# Google Gemini API
+google-generativeai>=0.3.0,<1.0.0

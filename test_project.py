@@ -10,11 +10,11 @@ import sys
 import traceback
 from pathlib import Path
 
-API_KEY = os.getenv("GROQ_API_KEY")
+API_KEY = os.getenv("GEMINI_API_KEY")
 LLM_TESTS_ENABLED = API_KEY is not None
 
 if LLM_TESTS_ENABLED:
-    os.environ["GROQ_API_KEY"] = API_KEY  # Ensure downstream modules can access it
+    os.environ["GEMINI_API_KEY"] = API_KEY  # Ensure downstream modules can access it
 
 def test_imports():
     """Test that all required modules can be imported."""
@@ -46,7 +46,7 @@ def test_imports():
         return False
     
     try:
-        from llm_handler import GroqHandler
+        from llm_handler import GeminiHandler
         print("✅ llm_handler imported successfully")
     except ImportError as e:
         print(f"❌ llm_handler import failed: {e}")
@@ -59,7 +59,7 @@ def test_imports():
 def test_llm_handler():
     """Test LLM handler initialization and API connection."""
     if not LLM_TESTS_ENABLED:
-        print("⚠️ Skipping LLM Handler test (GROQ_API_KEY not set).")
+        print("⚠️ Skipping LLM Handler test (GEMINI_API_KEY not set).")
         return True
 
     print("=" * 60)
@@ -67,11 +67,11 @@ def test_llm_handler():
     print("=" * 60)
     
     try:
-        from llm_handler import GroqHandler
+        from llm_handler import GeminiHandler
         
         # Test initialization
-        handler = GroqHandler()
-        print("✅ GroqHandler initialized successfully")
+            handler = GeminiHandler()
+            print("✅ GeminiHandler initialized successfully")
         
         # Test connection
         print("Testing API connection...")
@@ -158,7 +158,7 @@ def test_rag_pipeline():
 def test_end_to_end():
     """Test end-to-end flow."""
     if not LLM_TESTS_ENABLED:
-        print("⚠️ Skipping end-to-end test (GROQ_API_KEY not set).")
+        print("⚠️ Skipping end-to-end test (GEMINI_API_KEY not set).")
         return True
 
     print("=" * 60)
@@ -167,11 +167,11 @@ def test_end_to_end():
     
     try:
         from rag_pipeline import RAGPipeline
-        from llm_handler import GroqHandler
+        from llm_handler import GeminiHandler
         
         # Initialize components
         pipeline = RAGPipeline()
-        handler = GroqHandler()
+            handler = GeminiHandler()
         
         # Process a test document
         test_text = """
@@ -211,7 +211,7 @@ def test_end_to_end():
 def test_error_handling():
     """Test error handling for broken pipe and connection errors."""
     if not LLM_TESTS_ENABLED:
-        print("⚠️ Skipping error handling test (GROQ_API_KEY not set).")
+        print("⚠️ Skipping error handling test (GEMINI_API_KEY not set).")
         return True
 
     print("=" * 60)
@@ -219,9 +219,9 @@ def test_error_handling():
     print("=" * 60)
     
     try:
-        from llm_handler import GroqHandler
+        from llm_handler import GeminiHandler
         
-        handler = GroqHandler()
+            handler = GeminiHandler()
         
         # Test with invalid query (should handle gracefully)
         try:
@@ -252,7 +252,7 @@ def test_error_handling():
 def test_multilingual_answers():
     """Ensure the LLM responds in the correct language for supported scripts."""
     if not LLM_TESTS_ENABLED:
-        print("⚠️ Skipping multilingual answer test (GROQ_API_KEY not set).")
+        print("⚠️ Skipping multilingual answer test (GEMINI_API_KEY not set).")
         return True
 
     print("=" * 60)
@@ -261,9 +261,9 @@ def test_multilingual_answers():
 
     try:
         from rag_pipeline import RAGPipeline
-        from llm_handler import GroqHandler
+        from llm_handler import GeminiHandler
 
-        handler = GroqHandler()
+            handler = GeminiHandler()
 
         samples = [
             (

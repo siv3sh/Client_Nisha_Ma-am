@@ -1,37 +1,71 @@
 """
-LLM Handler for Groq API integration with multilingual support.
-Handles communication with Groq API and multilingual prompt construction.
+LLM Handler for Google Gemini API integration with multilingual support.
+Handles communication with Gemini API and multilingual prompt construction.
 """
 
 import os
 import json
 import re
-import requests
+import time
 from typing import List, Dict, Any, Optional
 from utils import get_language_name
 
-class GroqHandler:
+try:
+    import google.generativeai as genai
+except ImportError:
+    genai = None
+
+
+class GeminiHandler:
     """
-    Handler for Groq API integration with multilingual document QA capabilities.
+    Handler for Google Gemini API integration with multilingual document QA capabilities.
     """
     
     def __init__(self, api_key: str = None, model: str = None):
         """
-        Initialize Groq Handler.
+        Initialize Gemini Handler.
         
         Args:
-            api_key: Groq API key (default: from environment)
-            model: Groq model to use (default: mixtral-8x7b-32768)
+            api_key: Gemini API key (default: from environment)
+            model: Gemini model to use (default: gemini-pro)
         """
-        self.api_key = api_key or os.getenv('GROQ_API_KEY')
-        self.model = model or os.getenv('GROQ_MODEL', 'llama-3.1-8b-instant')
-        self.base_url = "https://api.groq.com/openai/v1/chat/completions"
+        if genai is None:
+            raise ImportError(
+                "google-generativeai package is required. Install it with: pip install google-generativeai"
+            )
+        
+        self.api_key = api_key or os.getenv('GEMINI_API_KEY')
+        self.model = model or os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
         
         if not self.api_key:
             raise ValueError(
-                "Groq API key is required. Please set GROQ_API_KEY environment variable or create a .env file. "
-                "Get your API key from: https://console.groq.com/keys"
+                "Gemini API key is required. Please set GEMINI_API_KEY environment variable or create a .env file. "
+                "Get your API key from: https://makersuite.google.com/app/apikey"
             )
+        
+        # Configure Gemini API
+        genai.configure(api_key=self.api_key)
+        
+        # Validate model exists before creating client
+        try:
+            available_models = self.get_available_models()
+            if self.model not in available_models:
+                # Try to use default if current model not available
+                default_model = "gemini-2.5-flash"
+                if default_model in available_models:
+                    print(f"Warning: Model '{self.model}' not available. Using '{default_model}' instead.")
+                    self.model = default_model
+                else:
+                    # Use first available model
+                    if available_models:
+                        print(f"Warning: Model '{self.model}' not available. Using '{available_models[0]}' instead.")
+                        self.model = available_models[0]
+                    else:
+                        raise ValueError(f"Model '{self.model}' is not available and no fallback models found.")
+        except Exception as e:
+            print(f"Warning: Could not validate model: {e}")
+        
+        self.client = genai.GenerativeModel(self.model)
     
     def _optimize_messages(self, messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
         """
@@ -91,6 +125,7 @@ class GroqHandler:
             query: User query
             context_chunks: Retrieved context chunks
             language: Document language code
+            answer_mode: Answer format mode
             
         Returns:
             tuple: (system_prompt, user_prompt)
@@ -191,165 +226,92 @@ Answer in {language_name} based on the context above. Follow the instructions fo
 
         return system_prompt, user_prompt
     
-    def _make_api_request(self, messages: List[Dict[str, str]], max_retries: int = 3) -> Optional[str]:
+    def _make_api_request(self, prompt: str, max_retries: int = 3) -> Optional[str]:
         """
-        Make API request to Groq with retry logic and better error handling.
+        Make API request to Gemini with retry logic and better error handling.
         
         Args:
-            messages: List of message dictionaries
+            prompt: Combined prompt (system + user)
             max_retries: Maximum number of retry attempts
             
         Returns:
             Optional[str]: Generated response or None if error
         """
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-        
         # Validate API key format
         if not self.api_key or len(self.api_key) < 20:
             print(f"ERROR: Invalid API key format (length: {len(self.api_key) if self.api_key else 0})")
             return None
         
-        # Optimize payload size to avoid connection issues
-        optimized_messages = self._optimize_messages(messages)
-        
-        payload = {
-            "model": self.model,
-            "messages": optimized_messages,
-            "temperature": 0.1,
-            "max_tokens": 1000,  # Reduced for faster responses and less connection time
-            "top_p": 0.9,
-            "stream": False
-        }
-        
         # Log request details
-        payload_str = json.dumps(payload)
-        payload_size = len(payload_str)
-        print(f"API Request - Model: {self.model}, Payload: {payload_size/1024:.1f}KB, Messages: {len(optimized_messages)}")
+        prompt_size = len(prompt)
+        print(f"API Request - Model: {self.model}, Prompt: {prompt_size/1024:.1f}KB")
         
-        # Warn if payload is very large
-        if payload_size > 30000:  # ~30KB
-            print(f"⚠️ Large payload detected ({payload_size/1024:.1f}KB), this may cause connection issues")
+        # Warn if prompt is very large
+        if prompt_size > 30000:  # ~30KB
+            print(f"⚠️ Large prompt detected ({prompt_size/1024:.1f}KB), this may cause issues")
         
-        # Simplified retry logic without session complexity
+        # Retry logic
         for attempt in range(max_retries):
             try:
-                # Make simple direct request (no session to avoid connection pool issues)
-                response = requests.post(
-                    self.base_url,
-                    json=payload,
-                    headers=headers,
-                    timeout=15,  # Short timeout
-                    stream=False
+                # Generate content using Gemini API
+                response = self.client.generate_content(
+                    prompt,
+                    generation_config={
+                        "temperature": 0.1,
+                        "max_output_tokens": 1000,
+                        "top_p": 0.9,
+                    }
                 )
                 
-                if response.status_code == 200:
+                if response and response.text:
+                    return response.text.strip()
+                else:
+                    print(f"Unexpected response format: {response}")
+                    return None
+                    
+            except Exception as e:
+                error_msg = str(e)
+                print(f"Gemini API error (attempt {attempt + 1}/{max_retries}): {error_msg}")
+                
+                # Handle model not found errors (404)
+                if "404" in error_msg or "not found" in error_msg.lower() or "not supported" in error_msg.lower():
+                    # Try to get available models
                     try:
-                        result = response.json()
-                        if 'choices' in result and len(result['choices']) > 0:
-                            content = result['choices'][0]['message']['content']
-                            return content
-                        else:
-                            print(f"Unexpected response format: {result}")
-                            return None
-                    except (ValueError, KeyError) as e:
-                        print(f"Error parsing response: {e}")
-                        return None
-                    finally:
-                        try:
-                            response.close()
-                        except:
-                            pass
-                elif response.status_code == 429:  # Rate limit
+                        available_models = self.get_available_models()
+                        model_error = f"Model '{self.model}' is not available. Available models: {', '.join(available_models[:5])}..."
+                    except:
+                        model_error = f"Model '{self.model}' is not available. Please check the model name."
+                    return f"Model error: {model_error}"
+                
+                # Handle specific error types
+                if "429" in error_msg or "quota" in error_msg.lower() or "rate limit" in error_msg.lower():
                     if attempt < max_retries - 1:
                         wait_time = (2 ** attempt) * 2
                         print(f"Rate limited. Retrying in {wait_time} seconds...")
-                        import time
                         time.sleep(wait_time)
                         continue
                     else:
                         print(f"Rate limit exceeded after {max_retries} attempts")
                         return None
-                elif response.status_code == 401:  # Unauthorized
-                    error_text = response.text
+                elif "401" in error_msg or "invalid" in error_msg.lower() or "unauthorized" in error_msg.lower() or "api key" in error_msg.lower():
                     print(f"Authentication error: Invalid API key")
-                    return f"Authentication error: Invalid API key. Please check your API key."
-                elif response.status_code == 400:  # Bad request
-                    error_msg = response.text
+                    return f"Authentication error: Invalid API key. Please check your API key in the sidebar settings."
+                elif "400" in error_msg or "bad request" in error_msg.lower():
                     print(f"Bad request error: {error_msg}")
-                    # Try with even smaller payload
-                    if "too long" in error_msg.lower() or "token" in error_msg.lower():
-                        # Further reduce payload
-                        if len(optimized_messages) > 1:
-                            user_msg = optimized_messages[-1]['content']
-                            # Keep only query, remove context
-                            if 'USER QUESTION:' in user_msg or 'Question:' in user_msg:
-                                query_only = user_msg.split('USER QUESTION:')[-1] if 'USER QUESTION:' in user_msg else user_msg.split('Question:')[-1]
-                                optimized_messages[-1]['content'] = f"Question: {query_only}"
-                                # Retry with minimal payload
-                                payload['messages'] = optimized_messages
-                                if attempt < max_retries - 1:
-                                    continue
+                    # Try with smaller prompt
+                    if len(prompt) > 15000:
+                        # Truncate prompt
+                        prompt = prompt[:15000] + "\n\n[Prompt truncated]"
+                        if attempt < max_retries - 1:
+                            continue
                     return None
                 else:
-                    error_text = response.text
-                    print(f"Groq API error: {response.status_code} - {error_text[:100]}")
                     if attempt < max_retries - 1:
                         wait_time = (2 ** attempt) * 1
-                        import time
+                        print(f"Retrying in {wait_time} seconds...")
                         time.sleep(wait_time)
                         continue
-                    return f"API error ({response.status_code}): {error_text[:100]}"
-                    
-            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, BrokenPipeError) as e:
-                error_type = "Connection" if isinstance(e, requests.exceptions.ConnectionError) else "Timeout" if isinstance(e, requests.exceptions.Timeout) else "Broken pipe"
-                error_details = str(e)
-                print(f"{error_type} error (attempt {attempt + 1}/{max_retries}): {error_details}")
-                
-                if attempt < max_retries - 1:
-                    wait_time = (2 ** attempt) * 2
-                    print(f"Retrying in {wait_time} seconds...")
-                    import time
-                    time.sleep(wait_time)
-                    continue
-                
-                return f"Connection failed: {error_type} - {error_details}. Please check your internet connection and try again."
-            except OSError as e:
-                if e.errno == 32:  # Broken pipe
-                    print(f"Broken pipe error (attempt {attempt + 1}/{max_retries}): {e}")
-                    if attempt < max_retries - 1:
-                        wait_time = (2 ** attempt) * 2
-                        import time
-                        time.sleep(wait_time)
-                        continue
-                    return f"Connection interrupted. Please check your internet connection and try again."
-                else:
-                    print(f"OS error (attempt {attempt + 1}/{max_retries}): {e}")
-                    if attempt < max_retries - 1:
-                        wait_time = (2 ** attempt) * 1
-                        import time
-                        time.sleep(wait_time)
-                        continue
-                    return f"Network error: {str(e)}"
-            except requests.exceptions.RequestException as e:
-                print(f"Request error (attempt {attempt + 1}/{max_retries}): {e}")
-                if attempt < max_retries - 1:
-                    wait_time = (2 ** attempt) * 1
-                    import time
-                    time.sleep(wait_time)
-                    continue
-                return f"Request failed: {str(e)}. Please try again."
-            except Exception as e:
-                print(f"Unexpected error: {e}")
-                import traceback
-                traceback.print_exc()
-                if attempt == max_retries - 1:
-                    return f"Error: {str(e)}. Please check the console for details."
-                import time
-                time.sleep(1)
-                continue
+                    return f"API error: {error_msg[:200]}"
         
         return None
     
@@ -361,12 +323,13 @@ Answer in {language_name} based on the context above. Follow the instructions fo
         answer_mode: str = "detailed_with_citations",
     ) -> str:
         """
-        Generate an answer using Groq API with enhanced error handling.
+        Generate an answer using Gemini API with enhanced error handling.
         
         Args:
             query: User query
             context_chunks: Retrieved context chunks
             language: Document language code
+            answer_mode: Answer format mode
             
         Returns:
             str: Generated answer
@@ -384,56 +347,44 @@ Answer in {language_name} based on the context above. Follow the instructions fo
                 query, context_chunks, language, answer_mode
             )
             
-            # Prepare messages
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ]
+            # Combine system and user prompts for Gemini
+            # Gemini uses a single prompt, so we combine system instructions with user content
+            combined_prompt = f"{system_prompt}\n\n{user_prompt}"
             
-            # Aggressively reduce context size to avoid connection issues
-            # Limit total prompt to 15000 chars (much smaller for reliability)
-            total_length = len(system_prompt) + len(user_prompt)
-            max_total_length = 15000  # Reduced from 32000 for better reliability
+            # Limit total prompt to 15000 chars for reliability
+            total_length = len(combined_prompt)
+            max_total_length = 15000
             
             if total_length > max_total_length:
                 print(f"⚠️ Prompt too long ({total_length} chars), truncating to {max_total_length}...")
                 
                 # Truncate context more aggressively
-                if "DOCUMENT CONTEXT:" in user_prompt:
+                if "Context:" in combined_prompt:
                     # Extract query first (most important)
-                    if "USER QUESTION:" in user_prompt:
-                        query_part = user_prompt.split("USER QUESTION:")[1]
+                    if "Question:" in combined_prompt:
+                        query_part = combined_prompt.split("Question:")[1]
                         # Calculate available space for context
                         available_for_context = max_total_length - len(system_prompt) - len(query_part) - 500
                         
                         if available_for_context > 1000:
                             # Extract and truncate context
-                            context_part = user_prompt.split("DOCUMENT CONTEXT:")[1].split("USER QUESTION:")[0]
+                            context_part = combined_prompt.split("Context:")[1].split("Question:")[0]
                             if len(context_part) > available_for_context:
-                                # Keep first part of context (usually most relevant)
                                 context_part = context_part[:available_for_context] + "\n\n[Context truncated]"
                             
-                            user_prompt = f"""DOCUMENT CONTEXT:
-{context_part}
-
-USER QUESTION: {query_part}"""
+                            combined_prompt = f"{system_prompt}\n\nContext:\n{context_part}\n\nQuestion:{query_part}"
                         else:
                             # Too little space, use minimal context
-                            user_prompt = f"USER QUESTION: {query_part}"
-                    
-                    messages = [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ]
+                            combined_prompt = f"{system_prompt}\n\nQuestion:{query_part}"
                 
-                print(f"✅ Optimized prompt size: {len(system_prompt) + len(user_prompt)} chars")
+                print(f"✅ Optimized prompt size: {len(combined_prompt)} chars")
             
             # Make API request with retries
-            response = self._make_api_request(messages, max_retries=3)
+            response = self._make_api_request(combined_prompt, max_retries=3)
             
             if response and response.strip():
                 # Check if response is an error message
-                if response.startswith("Connection failed") or response.startswith("Authentication error") or response.startswith("API error") or response.startswith("Request error") or response.startswith("Unexpected error") or response.startswith("Broken pipe") or response.startswith("OS error"):
+                if response.startswith("Connection failed") or response.startswith("Authentication error") or response.startswith("API error") or response.startswith("Request error") or response.startswith("Unexpected error"):
                     # It's an error message, return it with language-specific wrapper
                     error_msg = response
                     language_error = self._get_error_response(language)
@@ -441,7 +392,6 @@ USER QUESTION: {query_part}"""
                 
                 # Clean up response
                 cleaned_response = response.strip()
-                # Remove any markdown formatting if not needed (optional)
                 return cleaned_response
             else:
                 return self._get_error_response(language)
@@ -484,20 +434,15 @@ USER QUESTION: {query_part}"""
             return text
 
         try:
-            system_prompt = (
+            prompt = (
                 f"You are a professional translation engine. Your task is to translate text into {target_lang_name}. "
                 f"IMPORTANT: You MUST translate the text. Do NOT return the original text. "
                 f"Provide ONLY the translated text in {target_lang_name}, without any additional commentary, explanations, or notes. "
-                "Preserve the original meaning, tone, and structure. Keep all numbers, dates, and proper nouns as they are."
+                "Preserve the original meaning, tone, and structure. Keep all numbers, dates, and proper nouns as they are.\n\n"
+                f"Translate the following text to {target_lang_name}:\n\n{text}"
             )
             
-            user_prompt = f"Translate the following text to {target_lang_name}:\n\n{text}"
-            
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ]
-            response = self._make_api_request(messages, max_retries=3)
+            response = self._make_api_request(prompt, max_retries=3)
             translated = response.strip() if response else ""
             
             # If translation failed or returned empty, return empty string
@@ -506,10 +451,8 @@ USER QUESTION: {query_part}"""
                 return ""
             
             # Check if the translation is actually different from the original
-            # (allowing for minor whitespace differences)
             if translated.strip() == text.strip():
                 print(f"Warning: Translation returned same text as original. This might indicate the text is already in {target_lang_name}.")
-                # Still return it, but log the warning
             
             return translated
         except Exception as exc:
@@ -544,19 +487,15 @@ USER QUESTION: {query_part}"""
     
     def test_connection(self) -> bool:
         """
-        Test the connection to Groq API.
+        Test the connection to Gemini API.
         
         Returns:
             bool: True if connection successful, False otherwise
         """
         try:
-            test_messages = [
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": "Hello, please respond with 'Connection successful'."}
-            ]
-            
-            response = self._make_api_request(test_messages)
-            return response is not None
+            test_prompt = "Hello, please respond with 'Connection successful'."
+            response = self._make_api_request(test_prompt)
+            return response is not None and "successful" in response.lower()
             
         except Exception as e:
             print(f"Connection test failed: {e}")
@@ -565,24 +504,56 @@ USER QUESTION: {query_part}"""
     @staticmethod
     def get_available_models() -> List[str]:
         """
-        Get list of available Groq models.
+        Get list of available Gemini models.
+        Tries to fetch from API, falls back to hardcoded list.
         
         Returns:
             List[str]: List of available model names
         """
+        try:
+            api_key = os.getenv('GEMINI_API_KEY')
+            if api_key and genai:
+                genai.configure(api_key=api_key)
+                models = genai.list_models()
+                available = [
+                    m.name.split('/')[-1] 
+                    for m in models 
+                    if 'generateContent' in m.supported_generation_methods
+                ]
+                # Filter to main models (exclude previews and experimental unless specifically requested)
+                # Put gemini-2.5-flash first as it's the default
+                main_models = [
+                    "gemini-2.5-flash",
+                    "gemini-2.5-pro",
+                    "gemini-3-pro-preview",
+                    "gemini-2.5-flash-lite",
+                    "gemini-2.0-flash",
+                    "gemini-2.0-flash-lite",
+                    "gemini-pro-latest",
+                    "gemini-flash-latest",
+                ]
+                # Return intersection of available and main models
+                result = [m for m in main_models if m in available]
+                if result:
+                    return result
+        except Exception as e:
+            print(f"Warning: Could not fetch models from API: {e}")
+        
+        # Fallback to hardcoded list (gemini-2.5-flash is default, so it's first)
         return [
-            "llama-3.1-8b-instant",
-            "llama-3.1-70b-versatile",
-            "llama-3.1-405b-preview",
-            "mixtral-8x7b-32768",
-            "llama3-70b-8192", 
-            "llama3-8b-8192",
-            "gemma-7b-it"
+            "gemini-2.5-flash",
+            "gemini-2.5-pro",
+            "gemini-3-pro-preview",
+            "gemini-2.5-flash-lite",
+            "gemini-2.0-flash",
+            "gemini-2.0-flash-lite",
+            "gemini-pro-latest",
+            "gemini-flash-latest",
         ]
     
     def set_model(self, model: str) -> bool:
         """
-        Set the Groq model to use.
+        Set the Gemini model to use.
         
         Args:
             model: Model name
@@ -593,7 +564,12 @@ USER QUESTION: {query_part}"""
         available_models = self.get_available_models()
         if model in available_models:
             self.model = model
+            self.client = genai.GenerativeModel(self.model)
             return True
         else:
             print(f"Invalid model: {model}. Available models: {available_models}")
             return False
+
+
+# Alias for backward compatibility (if needed)
+GroqHandler = GeminiHandler
